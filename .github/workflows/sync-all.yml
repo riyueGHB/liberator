@@ -17,19 +17,25 @@ jobs:
   sync-all:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout fork
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # fork 仓库能自动识别上游；如果不是 fork，后面所有步骤都会跳过
       - name: Resolve upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          UPSTREAM=$(gh api "repos/${{ github.repository }}" --jq '.parent.full_name')
+          # fork 仓库会自动识别上游，不用改这里；
+          # 本地上传的独立仓库请把下面引号里的地址改成源仓库（只改这一行）
+          FALLBACK_UPSTREAM="<owner>/<repo>"
+
+          UPSTREAM=$(gh api "repos/${{ github.repository }}" --jq '.parent.full_name' 2>/dev/null || true)
           if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "null" ]; then
-            echo "::warning::这不是 fork 仓库，没有可同步的上游，跳过。"
+            UPSTREAM="$FALLBACK_UPSTREAM"
+          fi
+          if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "<owner>/<repo>" ]; then
+            echo "::warning::这不是 fork 仓库，也没有设置 FALLBACK_UPSTREAM，跳过。"
             exit 0
           fi
           echo "UPSTREAM=$UPSTREAM" >> "$GITHUB_ENV"
@@ -39,7 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$UPSTREAM" ]; then echo "不是 fork 仓库，跳过同步。"; exit 0; fi
+          if [ -z "$UPSTREAM" ]; then echo "没有可用的上游，跳过同步。"; exit 0; fi
           SYNC_FILE=".github/workflows/sync-all.yml"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -65,7 +71,7 @@ jobs:
               if git show-ref --verify --quiet "refs/heads/$branch"; then
                 git checkout "$branch"
                 OLD_HEAD=$(git rev-parse HEAD)
-                # 有共同历史 -> 普通合并；无共同历史（上游 force push 过）-> 镜像重置，并保住本工作流
+                # 有共同历史 -> 普通合并；无共同历史（打包上传/上游 force push）-> 镜像重置，并保住本工作流
                 if [ -n "$(git merge-base HEAD "upstream/$branch" 2>/dev/null)" ]; then
                   if ! git merge "upstream/$branch" --no-edit -m "Sync with upstream $branch" >/dev/null 2>&1; then
                     # 上游改了我们已删除的 workflow 时会冲突；只要冲突全在 .github/workflows/，
@@ -134,7 +140,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$UPSTREAM" ]; then echo "不是 fork 仓库，跳过 Release 同步。"; exit 0; fi
+          if [ -z "$UPSTREAM" ]; then echo "没有可用的上游，跳过 Release 同步。"; exit 0; fi
           curl -s "https://api.github.com/repos/$UPSTREAM/releases?per_page=30" > releases.json
           if ! grep -q "tag_name" releases.json; then
             echo "未找到公开的 Release。"

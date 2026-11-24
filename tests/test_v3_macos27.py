@@ -478,9 +478,17 @@ class NotOfferedWithoutAKit(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
     def test_the_repository_carries_no_kit(self):
-        files = subprocess.run(["git", "ls-files"], cwd=HERE, capture_output=True, text=True, check=True).stdout.split()
-        self.assertFalse([f for f in files if f.endswith(v3_macos27.MANIFEST)])
-        self.assertFalse([f for f in files if any(k in f for k in ("A2XACPIPlatform", "A2XSMBIOS", "a2x_exec_hook"))])
+        # A copy of the tree made without its repository (a build host's copy) has no list of tracked files to read:
+        # the test is then reported as not run, never as passed.
+        r = subprocess.run(["git", "ls-files"], cwd=HERE, capture_output=True, text=True)
+        if r.returncode != 0:
+            self.skipTest("NOT RUN: this copy of the tree has no repository (git ls-files: %s)" % r.stderr.strip()[:120])
+        files = r.stdout.split()
+        self.assertTrue(files, "git ls-files listed nothing")
+        # The repository holds the kit's scripts, its manifest and the kexts' source. What it must never hold is a
+        # built kit: an archive, a kernel collection, a disk image or a kext's built program.
+        built = (".tar.gz", ".kc", ".dmg")
+        self.assertFalse([f for f in files if f.endswith(built) or ".kext/Contents/MacOS/" in f])
 
 
 @unittest.skipUnless(os.environ.get("NULLMOTH_V3_REF"), "NOT RUN: set NULLMOTH_V3_REF to a folder with live.plist, "
